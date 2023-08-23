@@ -1,0 +1,107 @@
+import os
+import time
+import psutil
+import logging
+import threading
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+class RansomwareFileHandler(FileSystemEventHandler):
+    def __init__(self):
+        self.ransomware_files = []
+        self.lock = threading.Lock()
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+
+        valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
+        if any(event.src_path.endswith(ext) for ext in valid_extensions):
+            with open(event.src_path, "r") as f:
+                content = f.read()
+                if "encrypt" in content:
+                    with self.lock:
+                        if event.src_path not in self.ransomware_files:
+                            self.ransomware_files.append(event.src_path)
+                            logging.warning("Ransomware de criptografia detectado: %s", event.src_path)
+
+def finalizar_processos_suspeitos(processos):
+    for processo in processos:
+        try:
+            pid = processo['pid']
+            process = psutil.Process(pid)
+            process.terminate()
+            logging.warning("Processo suspeito finalizado: %s", processo)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+
+def monitorar_pastas(caminhos):
+    observers = []
+
+    for caminho in caminhos:
+        manipulador_eventos = RansomwareFileHandler()
+        observer = Observer()
+        observer.schedule(manipulador_eventos, caminho, recursive=True)
+        observer.start()
+        observers.append(observer)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        for observer in observers:
+            observer.stop()
+        for observer in observers:
+            observer.join()
+
+if __name__ == '__main__':
+    pastas_monitoradas = [os.getcwd()]
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
+    
+    # Monitoramento de pastas em threads separadas
+    thread_monitoramento = threading.Thread(target=monitorar_pastas, args=(pastas_monitoradas,))
+    thread_monitoramento.start()
+
+    try:
+        while True:
+            time.sleep(10)
+            processos_suspeitos = []
+
+            # Verificação de processo suspeitos
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    info_processo = proc.info
+                    if "decrypt" in str(info_processo['cmdline']).lower():
+                        processos_suspeitos.append(info_processo)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+
+            # Finalização de processos suspeitos
+            if processos_suspeitos:
+                logging.warning("Processo suspeito de ransomware detectado:")
+                for processo in processos_suspeitos:
+                    logging.warning(processo)
+                finalizar_processos_suspeitos(processos_suspeitos)
+
+            # Detecção heurística
+            valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
+            for caminho in pastas_monitoradas:
+                arquivos_modificados = []
+                for root, _, files in os.walk(caminho):
+                    for arquivo in files:
+                        caminho_completo = os.path.join(root, arquivo)
+                        if caminho_completo.endswith(tuple(valid_extensions)):
+                            try:
+                                with open(caminho_completo, "rb") as f:
+                                    conteudo = f.read()
+                                    if b"encrypt" in conteudo:
+                                        arquivos_modificados.append(caminho_completo)
+                            except Exception:
+                                pass
+                
+                if len(arquivos_modificados) >= 10:
+                    logging.warning("Comportamento suspeito de criptografia em massa detectado:")
+                    for arquivo in arquivos_modificados:
+                        logging.warning("Arquivo modificado: %s", arquivo)
+
+    except KeyboardInterrupt:
+        pass
