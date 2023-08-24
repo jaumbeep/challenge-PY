@@ -1,0 +1,17 @@
+import threading
+from watchdog.events import FileSystemEventHandler
+from collections import defaultdict
+
+class RansomwareFileHandler(FileSystemEventHandler):
+    def __init__(self):
+        self.file_changes = defaultdict(int)
+        self.lock = threading.Lock()
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        
+        valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
+        if any(event.src_path.endswith(ext) for ext in valid_extensions):
+            with self.lock:
+                self.file_changes[event.src_path] += 1
