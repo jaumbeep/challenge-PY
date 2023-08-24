@@ -1,0 +1,5 @@
+from edr import EDR
+
+if __name__ == '__main__':
+    edr = EDR()
+    edr.start()
