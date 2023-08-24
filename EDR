@@ -1,107 +1,96 @@
-import os
-import time
-import psutil
-import logging
 import threading
+import time
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+from manipulador_arquivos import RansomwareFileHandler
+import psutil
+import os
 
-class RansomwareFileHandler(FileSystemEventHandler):
+class EDR:
     def __init__(self):
-        self.ransomware_files = []
+        self.suspicious_pids = set()
         self.lock = threading.Lock()
+        self.file_changes_lock = threading.Lock()
+        self.manipulador_arquivos = RansomwareFileHandler()
 
-    def on_modified(self, event):
-        if event.is_directory:
-            return
+    def start(self):
+        pastas_monitoradas = [
+            os.path.expanduser("\\Área de Trabalho"),
+            os.path.expanduser("\\Documentos"),
+            os.path.expanduser("\\Downloads")
+        ]
 
-        valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
-        if any(event.src_path.endswith(ext) for ext in valid_extensions):
-            with open(event.src_path, "r") as f:
-                content = f.read()
-                if "encrypt" in content:
-                    with self.lock:
-                        if event.src_path not in self.ransomware_files:
-                            self.ransomware_files.append(event.src_path)
-                            logging.warning("Ransomware de criptografia detectado: %s", event.src_path)
+        monitor_pastas_thread = threading.Thread(target=self.monitoramento_pastas, args=(pastas_monitoradas,))
+        detector_thread = threading.Thread(target=self.rodar_detector)
+        finalizacao_thread = threading.Thread(target=self.finalizar_processos_suspeitos)
 
-def finalizar_processos_suspeitos(processos):
-    for processo in processos:
+        monitor_pastas_thread.start()
+        detector_thread.start()
+
         try:
-            pid = processo['pid']
-            process = psutil.Process(pid)
-            process.terminate()
-            logging.warning("Processo suspeito finalizado: %s", processo)
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            monitor_pastas_thread.join()
+            detector_thread.join()
+            finalizacao_thread.join()
+        except KeyboardInterrupt:
             pass
 
-def monitorar_pastas(caminhos):
-    observers = []
+    def monitoramento_pastas(self, paths):
+        observers = []
 
-    for caminho in caminhos:
-        manipulador_eventos = RansomwareFileHandler()
-        observer = Observer()
-        observer.schedule(manipulador_eventos, caminho, recursive=True)
-        observer.start()
-        observers.append(observer)
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        for observer in observers:
-            observer.stop()
-        for observer in observers:
-            observer.join()
+        for path in paths:
+            event_handler = self.file_handler
+            observer = Observer()
+            observer.schedule(event_handler, path, recursive=True)
+            observer.start()
+            observers.append(observer)
 
-if __name__ == '__main__':
-    pastas_monitoradas = [os.getcwd()]
-    logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
-    
-    # Monitoramento de pastas em threads separadas
-    thread_monitoramento = threading.Thread(target=monitorar_pastas, args=(pastas_monitoradas,))
-    thread_monitoramento.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            for observer in observers:
+                observer.stop()
+            for observer in observers:
+                observer.join()
 
-    try:
-        while True:
-            time.sleep(10)
-            processos_suspeitos = []
+    def rodar_detector(self):
+        try:
+            while True:
+                time.sleep(10)
+                with self.lock:
+                    self.identificar_processos_suspeitos()
+        except KeyboardInterrupt:
+            pass
 
-            # Verificação de processo suspeitos
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                try:
-                    info_processo = proc.info
-                    if "decrypt" in str(info_processo['cmdline']).lower():
-                        processos_suspeitos.append(info_processo)
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    pass
+    def identificar_processos_suspeitos(self, threshold=10):
+        with self.file_changes_lock:
+            for path, mudanca in self.file_handler.file_changes.items():
+                if mudanca >= threshold:
+                    for processo in psutil.process_iter(['pid', 'name']):
+                        try:
+                            processo_info = processo.info
+                            pid = processo_info['pid']
+                            if self.processo_interagindo_arquivo(pid, path):
+                                with self.lock:
+                                    self.suspicious_pids.add(pid)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            pass
 
-            # Finalização de processos suspeitos
-            if processos_suspeitos:
-                logging.warning("Processo suspeito de ransomware detectado:")
-                for processo in processos_suspeitos:
-                    logging.warning(processo)
-                finalizar_processos_suspeitos(processos_suspeitos)
+    def processo_interagindo_arquivo(self, pid, path_arquivo):
+        try:
+            processo = psutil.Process(pid)
+            abrir_arquivos = processo.open_files()
+            for arquivo in abrir_arquivos:
+                if path_arquivo == arquivo.path:
+                    return True
+            return False
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            return False
 
-            # Detecção heurística
-            valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
-            for caminho in pastas_monitoradas:
-                arquivos_modificados = []
-                for root, _, files in os.walk(caminho):
-                    for arquivo in files:
-                        caminho_completo = os.path.join(root, arquivo)
-                        if caminho_completo.endswith(tuple(valid_extensions)):
-                            try:
-                                with open(caminho_completo, "rb") as f:
-                                    conteudo = f.read()
-                                    if b"encrypt" in conteudo:
-                                        arquivos_modificados.append(caminho_completo)
-                            except Exception:
-                                pass
-                
-                if len(arquivos_modificados) >= 10:
-                    logging.warning("Comportamento suspeito de criptografia em massa detectado:")
-                    for arquivo in arquivos_modificados:
-                        logging.warning("Arquivo modificado: %s", arquivo)
-
-    except KeyboardInterrupt:
-        pass
+    def finalizar_processos_suspeitos(self):
+        for pid in self.suspicious_pids:
+            try:
+                process = psutil.Process(pid)
+                process.terminate()
+                print(f"Processo com PID {pid} finalizado.")
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
