@@ -13,6 +13,17 @@ class RansomwareFileHandler(FileSystemEventHandler):
         self.file_changes = defaultdict(int)
         self.lock = threading.Lock()
         self.valid_extensions = valid_extensions
+        self.observer = None
+
+    def start_observer(self, path):
+        self.observer = Observer()
+        self.observer.schedule(self, path, recursive=True)
+        self.observer.start()
+
+    def stop_observer(self):
+        if self.observer:
+            self.observer.stop()
+            self.observer.join()
 
     def on_modified(self, event):
         if event.is_directory:
@@ -124,5 +135,6 @@ class EDR:
                 pass
 
 if __name__ == '__main__':
+    print("Iniciando EDR")
     edr = EDR()
     edr.start()
