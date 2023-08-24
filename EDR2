@@ -1,0 +1,128 @@
+import threading
+import time
+import os
+from watchdog.observers import Observer
+import psutil
+from collections import defaultdict
+from watchdog.events import FileSystemEventHandler
+
+THRESHOLD = 10
+
+class RansomwareFileHandler(FileSystemEventHandler):
+    def __init__(self, valid_extensions):
+        self.file_changes = defaultdict(int)
+        self.lock = threading.Lock()
+        self.valid_extensions = valid_extensions
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        
+        if any(event.src_path.endswith(ext) for ext in self.valid_extensions):
+            with self.lock:
+                self.file_changes[event.src_path] += 1
+
+class EDR:
+    def __init__(self):
+        self.suspicious_pids = set()
+        self.lock = threading.Lock()
+        self.valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
+        self.file_handler = RansomwareFileHandler(self.valid_extensions)
+        self.start()
+
+    def start(self):
+        pastas_monitoradas = [
+            os.path.expandvars("%USERPROFILE%\\Desktop"),
+            os.path.expandvars("%USERPROFILE%\\Documents"),
+            os.path.expandvars("%USERPROFILE%\\Downloads")
+        ]
+
+        self.start_file_handler_observer(pastas_monitoradas)
+
+        monitor_pastas_thread = threading.Thread(target=self.monitoramento_pastas, args=(pastas_monitoradas,))
+        detector_thread = threading.Thread(target=self.rodar_detector)
+        finalizacao_thread = threading.Thread(target=self.finalizar_processos_suspeitos)
+
+        monitor_pastas_thread.start()
+        detector_thread.start()
+        finalizacao_thread.start()
+
+        try:
+            monitor_pastas_thread.join()
+            detector_thread.join()
+            finalizacao_thread.join()
+        except KeyboardInterrupt:
+            pass
+
+    def start_file_handler_observer(self, paths):
+        self.file_handler_observer = Observer()
+        for path in paths:
+            handler = self.file_handler
+            self.file_handler_observer.schedule(handler, path, recursive=True)
+            handler.start_observer(path)
+        self.file_handler_observer.start()
+
+    def monitoramento_pastas(self, paths):
+        observers = []
+
+        for path in paths:
+            observer = Observer()
+            observer.schedule(self.file_handler, path, recursive=True)
+            observer.start()
+            observers.append(observer)
+
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            for observer in observers:
+                observer.stop()
+            for observer in observers:
+                observer.join()
+
+    def rodar_detector(self):
+        try:
+            while True:
+                time.sleep(10)
+                with self.lock:
+                    self.identificar_processos_suspeitos()
+        except KeyboardInterrupt:
+            pass
+
+    def identificar_processos_suspeitos(self):
+        with self.file_handler.lock:
+            for path, mudanca in self.file_handler.file_changes.items():
+                if mudanca >= THRESHOLD:
+                    for processo in psutil.process_iter(['pid', 'name']):
+                        try:
+                            processo_info = processo.info
+                            pid = processo_info['pid']
+                            if self.processo_interagindo_arquivo(pid, path):
+                                with self.lock:
+                                    self.suspicious_pids.add(pid)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            pass
+
+    def processo_interagindo_arquivo(self, pid, path_arquivo):
+        try:
+            processo = psutil.Process(pid)
+            abrir_arquivos = processo.open_files()
+            for arquivo in abrir_arquivos:
+                if path_arquivo == arquivo.path:
+                    return True
+            return False
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            return False
+
+    def finalizar_processos_suspeitos(self):
+        for pid in self.suspicious_pids:
+            try:
+                process = psutil.Process(pid)
+                process.terminate()
+                print(f"Processo com PID {pid} finalizado.")
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+
+if __name__ == '__main__':
+    edr = EDR()
+    edr.start()
