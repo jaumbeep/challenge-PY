@@ -42,6 +42,13 @@ class EDR:
         self.start()
 
     def start(self):
+        print('/////////////////////////////////')
+        print('---------------------------------')
+        print('--------> EDR inciando <---------')
+        print('---------------------------------')
+        print('')
+        print('/////////////////////////////////')
+        print('')
         pastas_monitoradas = [
             os.path.expandvars("%USERPROFILE%\\Desktop"),
             os.path.expandvars("%USERPROFILE%\\Documents"),
@@ -72,6 +79,12 @@ class EDR:
             self.file_handler_observer.schedule(handler, path, recursive=True)
             handler.start_observer(path)
         self.file_handler_observer.start()
+
+        print('---------------------------------')
+        print('--------> EDR iniciado <---------')
+        print('---------------------------------')
+        print('/////////////////////////////////')
+        print('')
 
     def monitoramento_pastas(self, paths):
         observers = []
@@ -135,6 +148,5 @@ class EDR:
                 pass
 
 if __name__ == '__main__':
-    print("Iniciando EDR")
     edr = EDR()
     edr.start()
