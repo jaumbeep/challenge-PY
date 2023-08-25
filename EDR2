@@ -50,8 +50,8 @@ class EDR:
         print('/////////////////////////////////')
         print('')
         pastas_monitoradas = [
-            os.path.expandvars("%USERPROFILE%\\Desktop"),
-            os.path.expandvars("%USERPROFILE%\\Documents"),
+            os.path.expandvars("%USERPROFILE%\\Área de Trabalho"),
+            os.path.expandvars("%USERPROFILE%\\Documentos"),
             os.path.expandvars("%USERPROFILE%\\Downloads")
         ]
 
