@@ -6,7 +6,7 @@ from watchdog.observers import Observer
 from collections import defaultdict
 from watchdog.events import FileSystemEventHandler
 
-THRESHOLD = 10
+THRESHOLD = 7
 
 class RansomwareFileHandler(FileSystemEventHandler):
     def __init__(self, valid_extensions):
