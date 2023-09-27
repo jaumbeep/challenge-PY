@@ -45,7 +45,7 @@ class EDR:
         self.suspicious_pids = set()
         self.lock = threading.Lock()
         self.valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
-        self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)  # Use o ThreadPoolExecutor já definido
+        self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
         self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
         self.start()
 
@@ -119,7 +119,7 @@ class EDR:
                     if mudanca >= THRESHOLD:
                         executor.submit(self.processar_arquivo_suspeito, path)
 
-    def identificar_processos_suspeitos(self):
+    def identificar_processos_suspeitos2(self):  # Renomeada para evitar conflito
         with self.file_handler.lock:
             for path, mudanca in self.file_handler.file_changes.items():
                 if mudanca >= THRESHOLD:
@@ -154,5 +154,8 @@ class EDR:
                 pass
 
 if __name__ == '__main__':
-    edr = EDR()
-    edr.start()
+    try:
+        edr = EDR()
+        edr.start()
+    except Exception as e:
+        print(f"Erro inesperado: {e}")
