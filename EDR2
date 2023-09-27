@@ -1,19 +1,23 @@
-import threading
-import time
 import os
+import time
 import psutil
-from watchdog.observers import Observer
 from collections import defaultdict
+from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+import concurrent.futures  
+import threading
 
-THRESHOLD = 7
+THRESHOLD = 10
+MAX_THREADS = 4  
 
 class RansomwareFileHandler(FileSystemEventHandler):
-    def __init__(self, valid_extensions):
+    def __init__(self, valid_extensions, executor):
+        super().__init__()
         self.file_changes = defaultdict(int)
         self.lock = threading.Lock()
         self.valid_extensions = valid_extensions
         self.observer = None
+        self.executor = executor
 
     def start_observer(self, path):
         self.observer = Observer()
@@ -30,15 +34,19 @@ class RansomwareFileHandler(FileSystemEventHandler):
             return
         
         if any(event.src_path.endswith(ext) for ext in self.valid_extensions):
-            with self.lock:
-                self.file_changes[event.src_path] += 1
+            self.executor.submit(self.process_file_change, event.src_path)
+
+    def process_file_change(self, path):
+        with self.lock:
+            self.file_changes[path] += 1
 
 class EDR:
     def __init__(self):
         self.suspicious_pids = set()
         self.lock = threading.Lock()
         self.valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
-        self.file_handler = RansomwareFileHandler(self.valid_extensions)
+        self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)  # Use o ThreadPoolExecutor já definido
+        self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
         self.start()
 
     def start(self):
@@ -50,25 +58,16 @@ class EDR:
         print('/////////////////////////////////')
         print('')
         pastas_monitoradas = [
-            os.path.expandvars("%USERPROFILE%\\Área de Trabalho"),
-            os.path.expandvars("%USERPROFILE%\\Documentos"),
+            os.path.expandvars("%USERPROFILE%\\Desktop"),
+            os.path.expandvars("%USERPROFILE%\\Documents"),
             os.path.expandvars("%USERPROFILE%\\Downloads")
         ]
 
-        self.start_file_handler_observer(pastas_monitoradas)
-
-        monitor_pastas_thread = threading.Thread(target=self.monitoramento_pastas, args=(pastas_monitoradas,))
-        detector_thread = threading.Thread(target=self.rodar_detector)
-        finalizacao_thread = threading.Thread(target=self.finalizar_processos_suspeitos)
-
-        monitor_pastas_thread.start()
-        detector_thread.start()
-        finalizacao_thread.start()
+        self.file_handler.start_observer(pastas_monitoradas)
 
         try:
-            monitor_pastas_thread.join()
-            detector_thread.join()
-            finalizacao_thread.join()
+            while True:
+                time.sleep(1)
         except KeyboardInterrupt:
             pass
 
@@ -113,21 +112,26 @@ class EDR:
         except KeyboardInterrupt:
             pass
 
-def identificar_processos_suspeitos(self):
-    with self.file_handler.lock:
-        for path, mudanca in self.file_handler.file_changes.items():
-            if mudanca >= THRESHOLD:
-                for processo in psutil.process_iter(['pid', 'name']):
-                    try:
-                        processo_info = processo.info
-                        pid = processo_info['pid']
-                        if self.processo_interagindo_arquivo(pid, path):
-                            with self.lock:
-                                self.suspicious_pids.add(pid)
-                                print(f"Objeto malicioso de PID {pid} detectado")
-                                sys.stdout.flush()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                        pass
+    def identificar_processos_suspeitos(self):
+        with self.file_handler.lock:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                for path, mudanca in self.file_handler.file_changes.items():
+                    if mudanca >= THRESHOLD:
+                        executor.submit(self.processar_arquivo_suspeito, path)
+
+    def identificar_processos_suspeitos(self):
+        with self.file_handler.lock:
+            for path, mudanca in self.file_handler.file_changes.items():
+                if mudanca >= THRESHOLD:
+                    for processo in psutil.process_iter(['pid', 'name']):
+                        try:
+                            processo_info = processo.info
+                            pid = processo_info['pid']
+                            if self.processo_interagindo_arquivo(pid, path):
+                                with self.lock:
+                                    self.suspicious_pids.add(pid)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            pass
 
     def processo_interagindo_arquivo(self, pid, path_arquivo):
         try:
@@ -146,7 +150,6 @@ def identificar_processos_suspeitos(self):
                 process = psutil.Process(pid)
                 process.terminate()
                 print(f"Processo com PID {pid} finalizado.")
-                sys.stdout.flush()
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
 
