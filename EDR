@@ -11,12 +11,13 @@ THRESHOLD = 10
 MAX_THREADS = 4  
 
 class RansomwareFileHandler(FileSystemEventHandler):
-    def __init__(self, valid_extensions):
+    def __init__(self, valid_extensions, executor):
         super().__init__()
         self.file_changes = defaultdict(int)
         self.lock = threading.Lock()
         self.valid_extensions = valid_extensions
         self.observer = None
+        self.executor = executor
 
     def start_observer(self, path):
         self.observer = Observer()
@@ -33,42 +34,68 @@ class RansomwareFileHandler(FileSystemEventHandler):
             return
         
         if any(event.src_path.endswith(ext) for ext in self.valid_extensions):
-            executor.submit(self.process_file_change, event.src_path)
+            self.executor.submit(self.process_file_change, event.src_path)
 
     def process_file_change(self, path):
         with self.lock:
             self.file_changes[path] += 1
 
+class Honeypot(FileSystemEventHandler):
+    def __init__(self, honeypot_files):
+        super().__init__()
+        self.honeypot_files = honeypot_files
+
+    def on_access(self, event):
+        if event.src_path in self.honeypot_files:
+            print(f"Access to honeypot file: {event.src_path}")
+
 class EDR:
     def __init__(self):
         self.suspicious_pids = set()
         self.lock = threading.Lock()
-        self.valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
+        self.valid_extensions = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4")
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
-        self.file_handler = RansomwareFileHandler(self.valid_extensions)
+        self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
+        self.honeypot_files = self.create_honeypot_files()
+        self.honeypot = Honeypot(self.honeypot_files)
+        self.file_handler_observer = None
         self.start()
 
     def start(self):
-        print('/////////////////////////////////')
-        print('---------------------------------')
-        print('--------> EDR inciando <---------')
-        print('---------------------------------')
-        print('')
-        print('/////////////////////////////////')
-        print('')
-        pastas_monitoradas = [
-            os.path.expandvars("%USERPROFILE%\\Desktop"),
-            os.path.expandvars("%USERPROFILE%\\Documents"),
-            os.path.expandvars("%USERPROFILE%\\Downloads")
-        ]
-
-        self.file_handler.start_observer(pastas_monitoradas)
-
         try:
+            print('/////////////////////////////////')
+            print('---------------------------------')
+            print('--------> EDR inciando <---------')
+            print('---------------------------------')
+            print('')
+            print('/////////////////////////////////')
+            print('')
+            pastas_monitoradas = [
+                os.path.expandvars("%USERPROFILE%\\Desktop"),
+                os.path.expandvars("%USERPROFILE%\\Documents"),
+                os.path.expandvars("%USERPROFILE%\\Downloads")
+            ]
+
+            self.file_handler.start_observer(pastas_monitoradas)
+
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
+        except Exception as e:
+            print(f"Erro inesperado em start(): {e}")
+
+    def create_honeypot_files(self):
+        honeypot_files = []
+        desktop_path = os.path.expandvars("%USERPROFILE%\\Desktop")
+        
+        for i in range(1, 6):
+            honeypot_file = os.path.join(desktop_path, f"Honeypot{i}.txt")
+            with open(honeypot_file, "w") as f:
+                f.write("This is a honeypot file. Do not access it.")
+            honeypot_files.append(honeypot_file)
+        
+        return honeypot_files
 
     def start_file_handler_observer(self, paths):
         self.file_handler_observer = Observer()
@@ -112,46 +139,22 @@ class EDR:
             pass
 
     def identificar_processos_suspeitos(self):
-        with self.file_handler.lock:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        try:
+            with self.file_handler.lock:
                 for path, mudanca in self.file_handler.file_changes.items():
                     if mudanca >= THRESHOLD:
-                        executor.submit(self.processar_arquivo_suspeito, path)
+                        self.executor.submit(self.processar_arquivo_suspeito, path)
+        except Exception as e:
+            print(f"Erro em identificar_processos_suspeitos(): {e}")
 
-    def identificar_processos_suspeitos(self):
-        with self.file_handler.lock:
-            for path, mudanca in self.file_handler.file_changes.items():
-                if mudanca >= THRESHOLD:
-                    for processo in psutil.process_iter(['pid', 'name']):
-                        try:
-                            processo_info = processo.info
-                            pid = processo_info['pid']
-                            if self.processo_interagindo_arquivo(pid, path):
-                                with self.lock:
-                                    self.suspicious_pids.add(pid)
-                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                            pass
-
-    def processo_interagindo_arquivo(self, pid, path_arquivo):
-        try:
-            processo = psutil.Process(pid)
-            abrir_arquivos = processo.open_files()
-            for arquivo in abrir_arquivos:
-                if path_arquivo == arquivo.path:
-                    return True
-            return False
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            return False
-
-    def finalizar_processos_suspeitos(self):
-        for pid in self.suspicious_pids:
-            try:
-                process = psutil.Process(pid)
-                process.terminate()
-                print(f"Processo com PID {pid} finalizado.")
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
+    def __del__(self):
+        if self.file_handler_observer:
+            self.file_handler_observer.stop()
+            self.file_handler_observer.join()
 
 if __name__ == '__main__':
-    edr = EDR()
-    edr.start()
+    try:
+        edr = EDR()
+        edr.start()
+    except Exception as e:
+        print(f"Erro inesperado: {e}")
