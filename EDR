@@ -58,7 +58,7 @@ class EDR:
         self.manipulador_arquivos = ManipuladorArquivosRansomware(self.extensoes_validas, self.executor)
         self.arquivos_honeypot = self.criar_arquivos_honeypot()
         self.honeypot = Honeypot(self.arquivos_honeypot)
-        self.observador_manipulador_arquivos = None  # Inicializar com None
+        self.observador_manipulador_arquivos = None
         self.iniciar()
 
     def iniciar(self):
@@ -146,12 +146,6 @@ class EDR:
                         self.executor.submit(self.processar_arquivo_suspeito, caminho)
         except Exception as e:
             print(f"Erro em identificar_processos_suspeitos(): {e}")
-
-    def __del__(self):
-        # Certificar-se de que os observadores sejam interrompidos e recursos sejam limpos adequadamente
-        if self.observador_manipulador_arquivos:
-            self.observador_manipulador_arquivos.stop()
-            self.observador_manipulador_arquivos.join()
 
 if __name__ == '__main__':
     try:
