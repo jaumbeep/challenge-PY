@@ -4,81 +4,113 @@ import psutil
 from collections import defaultdict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import concurrent.futures  
+import concurrent.futures
 import threading
 
-THRESHOLD = 10
-MAX_THREADS = 4  
+LIMIAR = 10
+MAX_THREADS = 4
 
-class RansomwareFileHandler(FileSystemEventHandler):
-    def __init__(self, valid_extensions, executor):
+class ManipuladorArquivosRansomware(FileSystemEventHandler):
+    def __init__(self, extensoes_validas, executor):
         super().__init__()
-        self.file_changes = defaultdict(int)
-        self.lock = threading.Lock()
-        self.valid_extensions = valid_extensions
-        self.observer = None
+        self.mudancas_arquivo = defaultdict(int)
+        self.trava = threading.Lock()
+        self.extensoes_validas = extensoes_validas
+        self.observadores = []
         self.executor = executor
 
-    def start_observer(self, path):
-        self.observer = Observer()
-        self.observer.schedule(self, path, recursive=True)
-        self.observer.start()
+    def iniciar_observador(self, caminhos):
+        for caminho in caminhos:
+            observador = Observer()
+            caminho_expandido = os.path.expanduser(caminho)
+            observador.schedule(self, caminho_expandido, recursive=True)
+            observador.start()
+            self.observadores.append(observador)
 
-    def stop_observer(self):
-        if self.observer:
-            self.observer.stop()
-            self.observer.join()
+    def parar_observador(self):
+        for observador in self.observadores:
+            observador.stop()
+            observador.join()
 
-    def on_modified(self, event):
-        if event.is_directory:
+    def on_modified(self, evento):
+        if evento.is_directory:
             return
-        
-        if any(event.src_path.endswith(ext) for ext in self.valid_extensions):
-            self.executor.submit(self.process_file_change, event.src_path)
 
-    def process_file_change(self, path):
-        with self.lock:
-            self.file_changes[path] += 1
+        if any(evento.src_path.endswith(ext) for ext in self.extensoes_validas):
+            self.executor.submit(self.processar_mudanca_arquivo, evento.src_path)
+
+    def processar_mudanca_arquivo(self, caminho):
+        with self.trava:
+            self.mudancas_arquivo[caminho] += 1
+
+class Honeypot(FileSystemEventHandler):
+    def __init__(self, arquivos_honeypot):
+        super().__init__()
+        self.arquivos_honeypot = arquivos_honeypot
+
+    def on_access(self, evento):
+        if evento.src_path in self.arquivos_honeypot:
+            print(f"Acesso ao arquivo honeypot: {evento.src_path}")
 
 class EDR:
     def __init__(self):
-        self.suspicious_pids = set()
-        self.lock = threading.Lock()
-        self.valid_extensions = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4")
+        self.pids_suspeitos = set()
+        self.trava = threading.Lock()
+        self.extensoes_validas = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png",
+                                  ".bmp", ".gif", ".mp3", ".mp4")
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
-        self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
-        self.start()
+        self.manipulador_arquivos = ManipuladorArquivosRansomware(self.extensoes_validas, self.executor)
+        self.arquivos_honeypot = self.criar_arquivos_honeypot()
+        self.honeypot = Honeypot(self.arquivos_honeypot)
+        self.observador_manipulador_arquivos = None
+        self.iniciar()
 
-    def start(self):
-        print('/////////////////////////////////')
-        print('---------------------------------')
-        print('--------> EDR inciando <---------')
-        print('---------------------------------')
-        print('')
-        print('/////////////////////////////////')
-        print('')
-        pastas_monitoradas = [
-            os.path.expandvars("%USERPROFILE%\\Desktop"),
-            os.path.expandvars("%USERPROFILE%\\Documents"),
-            os.path.expandvars("%USERPROFILE%\\Downloads")
-        ]
-
-        for pasta in pastas_monitoradas:
-            self.file_handler.start_observer(pasta)
-
+    def iniciar(self):
         try:
+            print('/////////////////////////////////')
+            print('---------------------------------')
+            print('--------> EDR iniciando <--------')
+            print('---------------------------------')
+            print('')
+            print('/////////////////////////////////')
+            print('')
+            pastas_monitoradas = (
+                "~/Desktop",
+                "~/Documents",
+                "~/Downloads"
+            )
+
+            pastas_expandidas = [os.path.expanduser(pasta) for pasta in pastas_monitoradas]
+
+            self.manipulador_arquivos.iniciar_observador(pastas_expandidas)
+            self.iniciar_observador_manipulador_arquivos(pastas_expandidas)
+
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
+        except Exception as e:
+            print(f"Erro inesperado em iniciar(): {e}")
 
-    def start_file_handler_observer(self, paths):
-        self.file_handler_observer = Observer()
-        for path in paths:
-            handler = self.file_handler
-            self.file_handler_observer.schedule(handler, path, recursive=True)
-            handler.start_observer(path)
-        self.file_handler_observer.start()
+    def criar_arquivos_honeypot(self):
+        arquivos_honeypot = []
+        caminho_area_trabalho = os.path.expanduser("~/Desktop")
+
+        for i in range(1, 6):
+            arquivo_honeypot = os.path.join(caminho_area_trabalho, f"Honeypot{i}.txt")
+            with open(arquivo_honeypot, "w") as f:
+                f.write("Este é um arquivo honeypot. Não acesse.")
+            arquivos_honeypot.append(arquivo_honeypot)
+
+        return arquivos_honeypot
+
+    def iniciar_observador_manipulador_arquivos(self, caminhos):
+        self.observador_manipulador_arquivos = Observer()
+        for caminho in caminhos:
+            manipulador = self.manipulador_arquivos
+            self.observador_manipulador_arquivos.schedule(manipulador, caminho, recursive=True)
+            manipulador.iniciar_observador(caminho)
+        self.observador_manipulador_arquivos.start()
 
         print('---------------------------------')
         print('--------> EDR iniciado <---------')
@@ -86,77 +118,45 @@ class EDR:
         print('/////////////////////////////////')
         print('')
 
-    def monitoramento_pastas(self, paths):
-        observers = []
+    def monitorar_pastas(self, caminhos):
+        observadores = []
 
-        for path in paths:
-            observer = Observer()
-            observer.schedule(self.file_handler, path, recursive=True)
-            observer.start()
-            observers.append(observer)
+        for caminho in caminhos:
+            observador = Observer()
+            observador.schedule(self.manipulador_arquivos, caminho, recursive=True)
+            observador.start()
+            observadores.append(observador)
 
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            for observer in observers:
-                observer.stop()
-            for observer in observers:
-                observer.join()
+            for observador in observadores:
+                observador.stop()
+            for observador in observadores:
+                observador.join()
 
     def rodar_detector(self):
         try:
             while True:
                 time.sleep(10)
-                with self.lock:
+                with self.trava:
                     self.identificar_processos_suspeitos()
         except KeyboardInterrupt:
             pass
 
     def identificar_processos_suspeitos(self):
-        with self.file_handler.lock:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                for path, mudanca in self.file_handler.file_changes.items():
-                    if mudanca >= THRESHOLD:
-                        executor.submit(self.processar_arquivo_suspeito, path)
-
-    def identificar_processos_suspeitos2(self):  # Renomeada para evitar conflito
-        with self.file_handler.lock:
-            for path, mudanca in self.file_handler.file_changes.items():
-                if mudanca >= THRESHOLD:
-                    for processo in psutil.process_iter(['pid', 'name']):
-                        try:
-                            processo_info = processo.info
-                            pid = processo_info['pid']
-                            if self.processo_interagindo_arquivo(pid, path):
-                                with self.lock:
-                                    self.suspicious_pids.add(pid)
-                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                            pass
-
-    def processo_interagindo_arquivo(self, pid, path_arquivo):
         try:
-            processo = psutil.Process(pid)
-            abrir_arquivos = processo.open_files()
-            for arquivo in abrir_arquivos:
-                if path_arquivo == arquivo.path:
-                    return True
-            return False
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            return False
-
-    def finalizar_processos_suspeitos(self):
-        for pid in self.suspicious_pids:
-            try:
-                process = psutil.Process(pid)
-                process.terminate()
-                print(f"Processo com PID {pid} finalizado.")
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
+            with self.manipulador_arquivos.trava:
+                for caminho, mudanca in self.manipulador_arquivos.mudancas_arquivo.items():
+                    if mudanca >= LIMIAR:
+                        self.executor.submit(self.processar_arquivo_suspeito, caminho)
+        except Exception as e:
+            print(f"Erro em identificar_processos_suspeitos(): {e}")
 
 if __name__ == '__main__':
     try:
         edr = EDR()
-        edr.start()
+        edr.iniciar()
     except Exception as e:
         print(f"Erro inesperado: {e}")
