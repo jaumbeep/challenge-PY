@@ -44,7 +44,7 @@ class EDR:
     def __init__(self):
         self.suspicious_pids = set()
         self.lock = threading.Lock()
-        self.valid_extensions = [".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4"]
+        self.valid_extensions = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4")
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
         self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
         self.start()
@@ -63,7 +63,8 @@ class EDR:
             os.path.expandvars("%USERPROFILE%\\Downloads")
         ]
 
-        self.file_handler.start_observer(pastas_monitoradas)
+        for pasta in pastas_monitoradas:
+            self.file_handler.start_observer(pasta)
 
         try:
             while True:
