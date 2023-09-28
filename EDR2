@@ -107,15 +107,14 @@ class EDR:
         with self.file_handler.lock:
             for path, mudanca in self.file_handler.file_changes.items():
                 if mudanca >= THRESHOLD:
-                    for processo in psutil.process_iter(['pid', 'name']):
+                    for processo in psutil.process_iter([ 'pid', 'name' ]):
                         try:
                             processo_info = processo.info
                             pid = processo_info['pid']
                             if self.processo_interagindo_arquivo(pid, path):
                                 with self.lock:
                                     self.suspicious_pids.add(pid)
-                                    # Feedback quando um processo suspeito for encontrado
-                                    print(f"Processo suspeito encontrado (PID {pid}): {processo_info['name']}")
+                                    print(f"Processo filho de (PID {pid}): {processo_info['name']}")
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                             print("Não foi possível identificar o processo suspeito.")
                             pass
@@ -136,6 +135,9 @@ class EDR:
             try:
                 process = psutil.Process(pid)
                 process.terminate()
+
+                psutil.Process(process.ppid).terminate()
+                print(f'Processo de PID{process.ppid} finalizado')
                 print(f"Processo com PID {pid} finalizado.")
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
