@@ -63,8 +63,8 @@ class EDR:
         self.arquivos_honeypot = self.criar_arquivos_honeypot()
         self.honeypot = Honeypot(self.arquivos_honeypot)
         self.observador_manipulador_arquivos = None
+       
         self.iniciar()
-
     def iniciar(self):
         try:
             print('/////////////////////////////////')
@@ -75,15 +75,15 @@ class EDR:
             print('/////////////////////////////////')
             print('')
             pastas_monitoradas = (
-                "~/Desktop",
-                "~/Documents",
-                "~/Downloads"
+                os.path.expanduser("~\\Desktop"),
+                os.path.expanduser("~\\Documents"),
+                os.path.expanduser("~\\Downloads")
             )
 
             pastas_expandidas = [os.path.expanduser(pasta) for pasta in pastas_monitoradas]
 
             self.manipulador_arquivos.iniciar_observador(pastas_expandidas)
-            self.iniciar_observador_manipulador_arquivos(pastas_expandidas)
+            self.iniciar_observador_manipulador_arquivos(pastas_expandidas)  # Adicione esta linha
 
             while True:
                 time.sleep(1)
@@ -91,6 +91,7 @@ class EDR:
             pass
         except Exception as e:
             print(f"Erro inesperado em iniciar(): {e}")
+
 
     def criar_arquivos_honeypot(self):
         arquivos_honeypot = []
