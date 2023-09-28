@@ -1,21 +1,15 @@
 import os
 import time
 import psutil
+import concurrent.futures
+import threading
 from collections import defaultdict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import concurrent.futures
-import threading
+import logging 
 
 THRESHOLD = 10
 MAX_THREADS = 4
-
-class Manipulador:
-    def __init__(self):
-        pass
-
-    def iniciar_observador(self, pasta):
-        pass
 
 class RansomwareFileHandler(FileSystemEventHandler):
     def __init__(self, valid_extensions, executor):
@@ -23,40 +17,36 @@ class RansomwareFileHandler(FileSystemEventHandler):
         self.file_changes = defaultdict(int)
         self.lock = threading.Lock()
         self.valid_extensions = valid_extensions
-        self.observer = Observer()
         self.executor = executor
-        self.manipulador = Manipulador()
-
-    def start_observer(self, pastas_monitoradas):
-        for pasta in pastas_monitoradas:
-            self.observer.schedule(self, pasta, recursive=True)
-            self.manipulador.iniciar_observador(pasta)
-        self.observer.start()
-
-    def stop_observer(self):
-        if self.observer:
-            self.observer.stop()
-            self.observer.join()
 
     def on_modified(self, event):
         if event.is_directory:
             return
-        
-        if any(event.src_path.endswith(ext) for ext in self.valid_extensions):
+
+        # Verifique a extensão do arquivo
+        file_extension = os.path.splitext(event.src_path)[1]
+        if file_extension in self.valid_extensions:
             self.executor.submit(self.process_file_change, event.src_path)
 
     def process_file_change(self, path):
         with self.lock:
             self.file_changes[path] += 1
+            # Obter informações sobre o processo suspeito
+            pid = os.getpid()
+            process_name = psutil.Process(pid).name()
+            logging.info(f"Suspected process (PID {pid}): {process_name} modified file: {path}")
 
-class Honeypot(FileSystemEventHandler):
+class HoneypotFileHandler(FileSystemEventHandler):
     def __init__(self, honeypot_files):
         super().__init__()
         self.honeypot_files = honeypot_files
 
-    def on_access(self, event):
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+
         if event.src_path in self.honeypot_files:
-            print(f"Access to honeypot file: {event.src_path}")
+            print(f"Honeypot file modified: {event.src_path}")
 
 class EDR:
     def __init__(self):
@@ -65,93 +55,59 @@ class EDR:
         self.valid_extensions = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4")
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
         self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
-        self.honeypot_files = self.create_honeypot_files()
-        self.honeypot = Honeypot(self.honeypot_files)
-        self.start()
+        
+        # Configurar o sistema de registro
+        logging.basicConfig(filename='edr.log', level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
     def start(self):
-        print('/////////////////////////////////')
-        print('---------------------------------')
-        print('--------> EDR inciando <---------')
-        print('---------------------------------')
-        print('')
-        print('/////////////////////////////////')
-        print('')
-        pastas_monitoradas = [os.path.expanduser(f"~/{folder}") for folder in ["Desktop", "Documents", "Downloads"]]
-
-        self.file_handler.start_observer(pastas_monitoradas)
-
         try:
+            self.print_edr_status("Iniciando EDR")
+            pastas_monitoradas = [os.path.expanduser(f"~/{folder}") for folder in ["Desktop", "Documents", "Downloads"]]
+            honeypot_files = self.create_honeypot_files()
+
+            self.start_observer(pastas_monitoradas)
+            honeypot_observer = self.start_honeypot_observer(honeypot_files)
+            self.print_edr_status("EDR iniciado")
+
             while True:
                 time.sleep(1)
-        except KeyboardInterrupt:
-            pass
-
-    def create_honeypot_files(self):
-        honeypot_files = []
-        desktop_path = os.path.expandvars("%USERPROFILE%\\Desktop")
-        
-        for i in range(1, 6):
-            honeypot_file = os.path.join(desktop_path, f"Honeypot{i}.txt")
-            with open(honeypot_file, "w") as f:
-                f.write("This is a honeypot file. Do not access it.")
-            honeypot_files.append(honeypot_file)
-        
-        return honeypot_files
-
-    def start_file_handler_observer(self, paths):
-        self.file_handler_observer = Observer()
-        for path in paths:
-            handler = self.file_handler
-            self.file_handler_observer.schedule(handler, path, recursive=True)
-            handler.start_observer(path)
-        self.file_handler_observer.start()
-
-        print('---------------------------------')
-        print('--------> EDR iniciado <---------')
-        print('---------------------------------')
-        print('/////////////////////////////////')
-        print('')
-
-    def monitoramento_pastas(self, paths):
-        observers = []
-
-        for path in paths:
-            observer = Observer()
-            observer.schedule(self.file_handler, path, recursive=True)
-            observer.start()
-            observers.append(observer)
-
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            for observer in observers:
-                observer.stop()
-            for observer in observers:
-                observer.join()
-
-    def rodar_detector(self):
-        try:
-            while True:
-                time.sleep(10)
                 with self.lock:
                     self.identificar_processos_suspeitos()
         except KeyboardInterrupt:
-            pass
+            self.stop_observer()
+            self.stop_honeypot_observer(honeypot_observer)
+            self.finalizar_processos_suspeitos()
+            self.print_edr_status("EDR finalizado")
+
+    def start_observer(self, pastas_monitoradas):
+        self.file_handler_observer = Observer()
+        for pasta in pastas_monitoradas:
+            self.file_handler_observer.schedule(self.file_handler, pasta, recursive=True)
+        self.file_handler_observer.start()
+
+    def stop_observer(self):
+        if self.file_handler_observer:
+            self.file_handler_observer.stop()
+            self.file_handler_observer.join()
+
+    def start_honeypot_observer(self, honeypot_files):
+        honeypot_observer = Observer()
+        honeypot_handler = HoneypotFileHandler(honeypot_files)
+        for honeypot_file in honeypot_files:
+            honeypot_observer.schedule(honeypot_handler, os.path.dirname(honeypot_file))
+        honeypot_observer.start()
+        return honeypot_observer
+
+    def stop_honeypot_observer(self, honeypot_observer):
+        if honeypot_observer:
+            honeypot_observer.stop()
+            honeypot_observer.join()
 
     def identificar_processos_suspeitos(self):
         with self.file_handler.lock:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                for path, mudanca in self.file_handler.file_changes.items():
-                    if mudanca >= THRESHOLD:
-                        executor.submit(self.processar_arquivo_suspeito, path)
-
-    def identificar_processos_suspeitos2(self):
-        with self.file_handler.lock:
             for path, mudanca in self.file_handler.file_changes.items():
                 if mudanca >= THRESHOLD:
-                    for processo in psutil.process_iter(['pid', 'name']):
+                    for processo in psutil.process_iter([ 'pid', 'name' ]):
                         print(f'Processo PID{pid} interagindo com o arquivo{path}')
                         try:
                             processo_info = processo.info
@@ -159,7 +115,9 @@ class EDR:
                             if self.processo_interagindo_arquivo(pid, path):
                                 with self.lock:
                                     self.suspicious_pids.add(pid)
+                                    print(f"Processo filho de (PID {pid}): {processo_info['name']}")
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            print("Não foi possível identificar o processo suspeito.")
                             pass
 
     def processo_interagindo_arquivo(self, pid, path_arquivo):
@@ -167,7 +125,7 @@ class EDR:
             processo = psutil.Process(pid)
             abrir_arquivos = processo.open_files()
             for arquivo in abrir_arquivos:
-                print(f'PID{pid} alterando {arquivo.path}')
+                print(" PID {pid} do arquivo {arquivo.path} ")
                 if path_arquivo == arquivo.path:
                     return True
             return False
@@ -179,9 +137,37 @@ class EDR:
             try:
                 process = psutil.Process(pid)
                 process.terminate()
+
+                psutil.Process(process.ppid).terminate()
+                print(f'Processo de PID{process.ppid} finalizado')
                 print(f"Processo com PID {pid} finalizado.")
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
+
+    def create_honeypot_files(self):
+        honeypot_files = []
+        desktop_path = os.path.expandvars("%USERPROFILE%\\Desktop")
+        honeypot_base_path = os.path.join(desktop_path, "Honeypots")
+
+        if not os.path.exists(honeypot_base_path):
+            os.makedirs(honeypot_base_path)
+            self.print_edr_status("Criando honeypots")
+
+        for i in range(1, 6):
+            honeypot_file = os.path.join(honeypot_base_path, f"Honeypot{i}.txt")
+            honeypot_files.append(honeypot_file)
+
+            with open(honeypot_file, "w") as f:
+                f.write("This is a honeypot file. Do not access it.")
+
+        self.print_edr_status("Honeypots criados")
+        return honeypot_files
+
+    def print_edr_status(self, status):
+        print('/////////////////////////////////')
+        print(f'-------- {status} ---------')
+        print('---------------------------------')
+        print('')
 
 if __name__ == '__main__':
     try:
