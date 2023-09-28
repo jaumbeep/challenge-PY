@@ -117,6 +117,7 @@ class EDR:
                                     # Feedback quando um processo suspeito for encontrado
                                     print(f"Processo suspeito encontrado (PID {pid}): {processo_info['name']}")
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            print("Não foi possível identificar o processo suspeito.")
                             pass
 
     def processo_interagindo_arquivo(self, pid, path_arquivo):
