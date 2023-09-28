@@ -6,7 +6,7 @@ import threading
 from collections import defaultdict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import logging
+import logging 
 
 THRESHOLD = 10
 MAX_THREADS = 4
@@ -23,6 +23,7 @@ class RansomwareFileHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
+        # Verifique a extensão do arquivo
         file_extension = os.path.splitext(event.src_path)[1]
         if file_extension in self.valid_extensions:
             self.executor.submit(self.process_file_change, event.src_path)
@@ -30,7 +31,7 @@ class RansomwareFileHandler(FileSystemEventHandler):
     def process_file_change(self, path):
         with self.lock:
             self.file_changes[path] += 1
-
+            # Obter informações sobre o processo suspeito
             pid = os.getpid()
             process_name = psutil.Process(pid).name()
             logging.info(f"Suspected process (PID {pid}): {process_name} modified file: {path}")
@@ -54,7 +55,8 @@ class EDR:
         self.valid_extensions = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4")
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
         self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
-
+        
+        # Configurar o sistema de registro
         logging.basicConfig(filename='edr.log', level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
     def start(self):
@@ -112,6 +114,8 @@ class EDR:
                             if self.processo_interagindo_arquivo(pid, path):
                                 with self.lock:
                                     self.suspicious_pids.add(pid)
+                                    # Feedback quando um processo suspeito for encontrado
+                                    print(f"Processo suspeito encontrado (PID {pid}): {processo_info['name']}")
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                             pass
 
