@@ -44,7 +44,7 @@ class EDR:
         print('')
         pastas_monitoradas = [os.path.expanduser(f"~/{folder}") for folder in ["Desktop", "Documents", "Downloads"]]
 
-        self.create_honeypot_files()  # Chama a função de criação de honeypots
+        self.create_honeypot_files()
 
         try:
             self.start_observer(pastas_monitoradas)
@@ -111,7 +111,7 @@ class EDR:
         desktop_path = os.path.expandvars("%USERPROFILE%\\Desktop")
 
         honeypot_base_path = os.path.join(desktop_path, "Honeypots")
-        # Crie um diretório base se ele não existir
+
         if not os.path.exists(honeypot_base_path):
             os.makedirs(honeypot_base_path)
             print('/////////////////////////////////')
@@ -123,7 +123,7 @@ class EDR:
             honeypot_file = os.path.join(honeypot_base_path, f"Honeypot{i}.txt")
             honeypot_files.append(honeypot_file)
 
-            # Crie os arquivos das armadilhas
+
             with open(honeypot_file, "w") as f:
                 f.write("This is a honeypot file. Do not access it.")
 
