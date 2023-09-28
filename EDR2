@@ -1,11 +1,11 @@
 import os
 import time
 import psutil
+import concurrent.futures
+import threading
 from collections import defaultdict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import concurrent.futures
-import threading
 
 THRESHOLD = 10
 MAX_THREADS = 4
@@ -22,12 +22,43 @@ class RansomwareFileHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
-        if any(event.src_path.endswith(ext) for ext in self.valid_extensions):
+        # Verifica a extensão do arquivo
+        file_extension = os.path.splitext(event.src_path)[1]
+        if file_extension in self.valid_extensions:
             self.executor.submit(self.process_file_change, event.src_path)
 
     def process_file_change(self, path):
         with self.lock:
             self.file_changes[path] += 1
+
+class HoneypotFileHandler(FileSystemEventHandler):
+    def __init__(self, honeypot_files):
+        super().__init__()
+        self.honeypot_files = honeypot_files
+        self.original_extensions = {}  # armazenar extensões originais
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+
+        if event.src_path in self.honeypot_files:
+            # extensão original do honeypot
+            file_extension = os.path.splitext(event.src_path)[1]
+            self.original_extensions[event.src_path] = file_extension
+            print(f"Honeypot file created: {event.src_path}")
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+
+        if event.src_path in self.honeypot_files:
+            # Verifica a extensão atual do honeypot
+            current_extension = os.path.splitext(event.src_path)[1]
+
+            # Verifica se a extensão atual é diferente da extensão original
+            if current_extension != self.original_extensions.get(event.src_path):
+                print(f"Honeypot file extension changed: {event.src_path}")
+                # Realiza ações aqui para lidar com a mudança de extensão
 
 class EDR:
     def __init__(self):
@@ -38,28 +69,24 @@ class EDR:
         self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
 
     def start(self):
-        print('/////////////////////////////////')
-        print('-------- Iniciando EDR ---------')
-        print('---------------------------------')
-        print('')
-        pastas_monitoradas = [os.path.expanduser(f"~/{folder}") for folder in ["Desktop", "Documents", "Downloads"]]
-
-        self.create_honeypot_files()
-
         try:
+            self.print_edr_status("Iniciando EDR")
+            pastas_monitoradas = [os.path.expanduser(f"~/{folder}") for folder in ["Desktop", "Documents", "Downloads"]]
+            honeypot_files = self.create_honeypot_files()
+
             self.start_observer(pastas_monitoradas)
-            print('EDR iniciado')
+            honeypot_observer = self.start_honeypot_observer(honeypot_files)
+            self.print_edr_status("EDR iniciado")
+
             while True:
                 time.sleep(1)
                 with self.lock:
                     self.identificar_processos_suspeitos()
         except KeyboardInterrupt:
             self.stop_observer()
-            print('/////////////////////////////////')
-            print('--------- Finalizando EDR ---------')
-            print('---------------------------------')
-            print('')
-            print('EDR finalizado')
+            self.stop_honeypot_observer(honeypot_observer)
+            self.finalizar_processos_suspeitos()
+            self.print_edr_status("EDR finalizado")
 
     def start_observer(self, pastas_monitoradas):
         self.file_handler_observer = Observer()
@@ -71,6 +98,19 @@ class EDR:
         if self.file_handler_observer:
             self.file_handler_observer.stop()
             self.file_handler_observer.join()
+
+    def start_honeypot_observer(self, honeypot_files):
+        honeypot_observer = Observer()
+        honeypot_handler = HoneypotFileHandler(honeypot_files)
+        for honeypot_file in honeypot_files:
+            honeypot_observer.schedule(honeypot_handler, os.path.dirname(honeypot_file))
+        honeypot_observer.start()
+        return honeypot_observer
+
+    def stop_honeypot_observer(self, honeypot_observer):
+        if honeypot_observer:
+            honeypot_observer.stop()
+            honeypot_observer.join()
 
     def identificar_processos_suspeitos(self):
         with self.file_handler.lock:
@@ -109,26 +149,25 @@ class EDR:
     def create_honeypot_files(self):
         honeypot_files = []
         desktop_path = os.path.expandvars("%USERPROFILE%\\Desktop")
-
         honeypot_base_path = os.path.join(desktop_path, "Honeypots")
 
         if not os.path.exists(honeypot_base_path):
             os.makedirs(honeypot_base_path)
-            print('/////////////////////////////////')
-            print('--- Criando honeypots ---')
-            print('---------------------------------')
-            print('')
+            self.print_edr_status("Criando honeypots")
 
         for i in range(1, 6):
             honeypot_file = os.path.join(honeypot_base_path, f"Honeypot{i}.txt")
             honeypot_files.append(honeypot_file)
 
-
             with open(honeypot_file, "w") as f:
                 f.write("This is a honeypot file. Do not access it.")
 
-        print('---------------------------------')
-        print('----- Honeypots criados -----')
+        self.print_edr_status("Honeypots criados")
+        return honeypot_files
+
+    def print_edr_status(self, status):
+        print('/////////////////////////////////')
+        print(f'-------- {status} ---------')
         print('---------------------------------')
         print('')
 
