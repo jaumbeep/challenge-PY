@@ -22,7 +22,7 @@ class RansomwareFileHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
-        # Verifica a extensão do arquivo
+        # Verifique a extensão do arquivo
         file_extension = os.path.splitext(event.src_path)[1]
         if file_extension in self.valid_extensions:
             self.executor.submit(self.process_file_change, event.src_path)
@@ -35,14 +35,13 @@ class HoneypotFileHandler(FileSystemEventHandler):
     def __init__(self, honeypot_files):
         super().__init__()
         self.honeypot_files = honeypot_files
-        self.original_extensions = {}  # armazenar extensões originais
+        self.original_extensions = {}
 
     def on_created(self, event):
         if event.is_directory:
             return
 
         if event.src_path in self.honeypot_files:
-            # extensão original do honeypot
             file_extension = os.path.splitext(event.src_path)[1]
             self.original_extensions[event.src_path] = file_extension
             print(f"Honeypot file created: {event.src_path}")
@@ -52,13 +51,12 @@ class HoneypotFileHandler(FileSystemEventHandler):
             return
 
         if event.src_path in self.honeypot_files:
-            # Verifica a extensão atual do honeypot
             current_extension = os.path.splitext(event.src_path)[1]
 
-            # Verifica se a extensão atual é diferente da extensão original
-            if current_extension != self.original_extensions.get(event.src_path):
-                print(f"Honeypot file extension changed: {event.src_path}")
-                # Realiza ações aqui para lidar com a mudança de extensão
+            if (current_extension != self.original_extensions.get(event.src_path)) or \
+               (self.file_changes[event.src_path] >= THRESHOLD):
+                print(f"Suspicious activity detected: {event.src_path}")
+                # Realize ações específicas aqui para lidar com atividades suspeitas
 
 class EDR:
     def __init__(self):
