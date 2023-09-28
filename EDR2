@@ -6,6 +6,7 @@ import threading
 from collections import defaultdict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+import logging
 
 THRESHOLD = 10
 MAX_THREADS = 4
@@ -22,7 +23,6 @@ class RansomwareFileHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
-        # Verifique a extensão do arquivo
         file_extension = os.path.splitext(event.src_path)[1]
         if file_extension in self.valid_extensions:
             self.executor.submit(self.process_file_change, event.src_path)
@@ -31,32 +31,21 @@ class RansomwareFileHandler(FileSystemEventHandler):
         with self.lock:
             self.file_changes[path] += 1
 
+            pid = os.getpid()
+            process_name = psutil.Process(pid).name()
+            logging.info(f"Suspected process (PID {pid}): {process_name} modified file: {path}")
+
 class HoneypotFileHandler(FileSystemEventHandler):
     def __init__(self, honeypot_files):
         super().__init__()
         self.honeypot_files = honeypot_files
-        self.original_extensions = {}
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-
-        if event.src_path in self.honeypot_files:
-            file_extension = os.path.splitext(event.src_path)[1]
-            self.original_extensions[event.src_path] = file_extension
-            print(f"Honeypot file created: {event.src_path}")
 
     def on_modified(self, event):
         if event.is_directory:
             return
 
         if event.src_path in self.honeypot_files:
-            current_extension = os.path.splitext(event.src_path)[1]
-
-            if (current_extension != self.original_extensions.get(event.src_path)) or \
-               (self.file_changes[event.src_path] >= THRESHOLD):
-                print(f"Suspicious activity detected: {event.src_path}")
-                # Realize ações específicas aqui para lidar com atividades suspeitas
+            print(f"Honeypot file modified: {event.src_path}")
 
 class EDR:
     def __init__(self):
@@ -65,6 +54,8 @@ class EDR:
         self.valid_extensions = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4")
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
         self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
+
+        logging.basicConfig(filename='edr.log', level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
     def start(self):
         try:
