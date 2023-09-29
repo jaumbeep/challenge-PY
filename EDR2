@@ -6,7 +6,7 @@ import threading
 from collections import defaultdict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import logging 
+import logging
 
 THRESHOLD = 10
 MAX_THREADS = 4
@@ -102,8 +102,11 @@ class EDR:
             honeypot_observer.stop()
             honeypot_observer.join()
 
+    def is_process_excluded(self, process_name):
+        excluded_processes = ["test.exe", "test.exe"]
+        return process_name in excluded_processes
+
     def identificar_processos_suspeitos(self):
-        IGNORAR_NOMES = ["test.exe", "powershell.exe"]
         with self.file_handler.lock:
             for path, mudanca in self.file_handler.file_changes.items():
                 if mudanca >= THRESHOLD:
@@ -114,20 +117,20 @@ class EDR:
                             ppid = processo_info['ppid']
                             nome_processo = processo_info['name']
 
-                            if nome_processo not in IGNORAR_NOMES:
+                            if not self.is_process_excluded(nome_processo):
                                 if self.processo_interagindo_arquivo(pid_filho, path):
                                     with self.lock:
                                         self.suspicious_pids.add(pid_filho)
-                                        print(f"Processo filho suspeito encontrado (PID {pid_filho}): {nome_processo}")
+                                        logging.info(f"Processo filho suspeito encontrado (PID {pid_filho}): {nome_processo}")
 
                                     try:
                                         processo_pai = psutil.Process(ppid)
                                         processo_pai.terminate()
-                                        print(f"Processo pai (PID {ppid}) encerrado.")
+                                        logging.info(f"Processo pai (PID {ppid}) encerrado.")
                                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                                        print(f"Não foi possível encerrar o processo pai (PID {ppid}).")
+                                        logging.warning(f"Não foi possível encerrar o processo pai (PID {ppid}).")
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                            print("Não foi possível identificar o processo suspeito.")
+                            logging.warning("Não foi possível identificar o processo suspeito.")
                             pass
 
     def processo_interagindo_arquivo(self, pid, path_arquivo):
@@ -146,7 +149,7 @@ class EDR:
             try:
                 process = psutil.Process(pid)
                 process.terminate()
-                print(f"Processo com PID {pid} finalizado.")
+                logging.info(f"Processo com PID {pid} finalizado.")
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
 
