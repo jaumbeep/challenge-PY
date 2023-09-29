@@ -12,12 +12,13 @@ THRESHOLD = 10
 MAX_THREADS = 4
 
 class RansomwareFileHandler(FileSystemEventHandler):
-    def __init__(self, valid_extensions, executor):
+    def __init__(self, valid_extensions, executor, edr_pid):
         super().__init__()
         self.file_changes = defaultdict(int)
         self.lock = threading.Lock()
         self.valid_extensions = valid_extensions
         self.executor = executor
+        self.edr_pid = edr_pid
 
     def on_modified(self, event):
         if event.is_directory:
@@ -54,9 +55,14 @@ class EDR:
         self.lock = threading.Lock()
         self.valid_extensions = (".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".jpg", ".png", ".bmp", ".gif", ".mp3", ".mp4")
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
-        self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
-        
+
+
+        self.edr_pid = os.getpid()
+
+
         logging.basicConfig(filename='edr.log', level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+
+        self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor, self.edr_pid)
 
     def start(self):
         try:
@@ -102,11 +108,8 @@ class EDR:
             honeypot_observer.stop()
             honeypot_observer.join()
 
-    def is_process_excluded(self, process_name):
-        excluded_processes = ["test.exe", "test.exe"]
-        return process_name in excluded_processes
-
     def identificar_processos_suspeitos(self):
+        IGNORAR_NOMES = ["test.exe", "powershell.exe"]
         with self.file_handler.lock:
             for path, mudanca in self.file_handler.file_changes.items():
                 if mudanca >= THRESHOLD:
@@ -117,20 +120,21 @@ class EDR:
                             ppid = processo_info['ppid']
                             nome_processo = processo_info['name']
 
-                            if not self.is_process_excluded(nome_processo):
+                            if nome_processo not in IGNORAR_NOMES:
                                 if self.processo_interagindo_arquivo(pid_filho, path):
                                     with self.lock:
                                         self.suspicious_pids.add(pid_filho)
-                                        logging.info(f"Processo filho suspeito encontrado (PID {pid_filho}): {nome_processo}")
+                                        print(f"Processo filho suspeito encontrado (PID {pid_filho}): {nome_processo}")
 
-                                    try:
-                                        processo_pai = psutil.Process(ppid)
-                                        processo_pai.terminate()
-                                        logging.info(f"Processo pai (PID {ppid}) encerrado.")
-                                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                                        logging.warning(f"Não foi possível encerrar o processo pai (PID {ppid}).")
+                                    if ppid != self.edr_pid:
+                                        try:
+                                            processo_pai = psutil.Process(ppid)
+                                            processo_pai.terminate()
+                                            print(f"Processo pai (PID {ppid}) encerrado.")
+                                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                                            print(f"Não foi possível encerrar o processo pai (PID {ppid}).")
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                            logging.warning("Não foi possível identificar o processo suspeito.")
+                            print("Não foi possível identificar o processo suspeito.")
                             pass
 
     def processo_interagindo_arquivo(self, pid, path_arquivo):
@@ -149,7 +153,7 @@ class EDR:
             try:
                 process = psutil.Process(pid)
                 process.terminate()
-                logging.info(f"Processo com PID {pid} finalizado.")
+                print(f"Processo com PID {pid} finalizado.")
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
 
