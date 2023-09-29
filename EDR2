@@ -103,7 +103,7 @@ class EDR:
             honeypot_observer.join()
 
     def identificar_processos_suspeitos(self):
-        IGNORAR_NOMES = ["python.exe", "powershell.exe"]
+        IGNORAR_NOMES = ["test.exe", "powershell.exe"]
         with self.file_handler.lock:
             for path, mudanca in self.file_handler.file_changes.items():
                 if mudanca >= THRESHOLD:
