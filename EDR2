@@ -23,7 +23,6 @@ class RansomwareFileHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
-        # Verifique a extensão do arquivo
         file_extension = os.path.splitext(event.src_path)[1]
         if file_extension in self.valid_extensions:
             self.executor.submit(self.process_file_change, event.src_path)
@@ -31,10 +30,11 @@ class RansomwareFileHandler(FileSystemEventHandler):
     def process_file_change(self, path):
         with self.lock:
             self.file_changes[path] += 1
-            # Obter informações sobre o processo suspeito
             pid = os.getpid()
+            ppid = os.getppid()
             process_name = psutil.Process(pid).name()
-            logging.info(f"Suspected process (PID {pid}): {process_name} modified file: {path}")
+            parent_process_name = psutil.Process(ppid).name()
+            logging.info(f"Suspected process (PID {pid}, PPID {ppid}): {process_name} (Parent: {parent_process_name}) modified file: {path}")
 
 class HoneypotFileHandler(FileSystemEventHandler):
     def __init__(self, honeypot_files):
@@ -56,7 +56,6 @@ class EDR:
         self.executor = concurrent.futures.ThreadPoolExecutor(MAX_THREADS)
         self.file_handler = RansomwareFileHandler(self.valid_extensions, self.executor)
         
-        # Configurar o sistema de registro
         logging.basicConfig(filename='edr.log', level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
     def start(self):
@@ -104,18 +103,29 @@ class EDR:
             honeypot_observer.join()
 
     def identificar_processos_suspeitos(self):
+        IGNORAR_NOMES = ["python.exe", "powershell.exe"]
         with self.file_handler.lock:
             for path, mudanca in self.file_handler.file_changes.items():
                 if mudanca >= THRESHOLD:
-                    for processo in psutil.process_iter([ 'pid', 'name' ]):
-                        print(f'Processo PID{pid} interagindo com o arquivo{path}')
+                    for processo_filho in psutil.process_iter(['pid', 'name', 'ppid']):
                         try:
-                            processo_info = processo.info
-                            pid = processo_info['pid']
-                            if self.processo_interagindo_arquivo(pid, path):
-                                with self.lock:
-                                    self.suspicious_pids.add(pid)
-                                    print(f"Processo filho de (PID {pid}): {processo_info['name']}")
+                            processo_info = processo_filho.info
+                            pid_filho = processo_info['pid']
+                            ppid = processo_info['ppid']
+                            nome_processo = processo_info['name']
+
+                            if nome_processo not in IGNORAR_NOMES:
+                                if self.processo_interagindo_arquivo(pid_filho, path):
+                                    with self.lock:
+                                        self.suspicious_pids.add(pid_filho)
+                                        print(f"Processo filho suspeito encontrado (PID {pid_filho}): {nome_processo}")
+
+                                    try:
+                                        processo_pai = psutil.Process(ppid)
+                                        processo_pai.terminate()
+                                        print(f"Processo pai (PID {ppid}) encerrado.")
+                                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                                        print(f"Não foi possível encerrar o processo pai (PID {ppid}).")
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                             print("Não foi possível identificar o processo suspeito.")
                             pass
@@ -125,7 +135,6 @@ class EDR:
             processo = psutil.Process(pid)
             abrir_arquivos = processo.open_files()
             for arquivo in abrir_arquivos:
-                print(" PID {pid} do arquivo {arquivo.path} ")
                 if path_arquivo == arquivo.path:
                     return True
             return False
@@ -137,9 +146,6 @@ class EDR:
             try:
                 process = psutil.Process(pid)
                 process.terminate()
-
-                psutil.Process(process.ppid).terminate()
-                print(f'Processo de PID{process.ppid} finalizado')
                 print(f"Processo com PID {pid} finalizado.")
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
